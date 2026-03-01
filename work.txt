@@ -30,3 +30,6 @@
   7. 评价提交的用户签名授权（防平台代付场景地址冒用）未完成
   8. 链上事件订阅 worker（异步回填/重试）未完成
   9. 社交、积分、DAO 等扩展模块 未完成
+
+  AVAX_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc
+AVAX_EXPLORER_URL=https://testnet.snowtrace.io
