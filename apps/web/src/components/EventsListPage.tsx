@@ -38,7 +38,7 @@ export function EventsListPage({ onOpenEvent }: Props) {
   return (
     <section className="card">
       <div className="section-head">
-        <h2>活动列表</h2>
+        <h2>活动广场</h2>
         <button className="ghost-button" onClick={() => void refetch()}>
           刷新
         </button>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import { useQuery } from "@tanstack/react-query";
 import { ticketPassAbi } from "@eventatlas/shared";
-import { formatEther } from "viem";
+import { erc20Abi } from "viem";
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
 import {
   confirmOrder,
@@ -28,8 +29,32 @@ type ReviewView = {
   createdAt: string;
 };
 
+type PaymentToken = "AVAX" | "USDT" | "USDC";
+
 const ticketPassAddress = (import.meta.env.VITE_TICKET_PASS_ADDRESS ?? "") as `0x${string}`;
+const usdtAddress = (import.meta.env.VITE_USDT_ADDRESS ?? "") as `0x${string}`;
+const usdcAddress = (import.meta.env.VITE_USDC_ADDRESS ?? "") as `0x${string}`;
 const targetChainId = Number(import.meta.env.VITE_AVAX_CHAIN_ID ?? 43113);
+
+function formatUsd6(value: string) {
+  const amount = BigInt(value);
+  const intPart = amount / 1_000_000n;
+  const frac = (amount % 1_000_000n).toString().padStart(6, "0").slice(0, 2);
+  return `$${intPart.toString()}.${frac}`;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    const message = (error.response?.data as { message?: string } | undefined)?.message;
+    if (message) {
+      return message;
+    }
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return fallback;
+}
 
 export function EventDetailPage({ eventId, checkinNonce }: Props) {
   const { address, chain } = useAccount();
@@ -41,6 +66,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
   const [reviewContent, setReviewContent] = useState("");
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [checkinCodeStatus, setCheckinCodeStatus] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
+  const [paymentToken, setPaymentToken] = useState<PaymentToken>("AVAX");
 
   const { data: event, isLoading, refetch } = useQuery({
     queryKey: ["event", eventId],
@@ -80,6 +106,10 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     () => `${window.location.origin}/#/checkin-board/${eventId}`,
     [eventId]
   );
+  const stableAvailable = {
+    USDT: Boolean(usdtAddress),
+    USDC: Boolean(usdcAddress)
+  };
 
   useEffect(() => {
     if (!checkinNonce) {
@@ -122,7 +152,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     };
   }, [checkinNonce, eventId]);
 
-  async function buy(ticketTypeId: number, priceWei: string) {
+  async function buy(ticketTypeId: number, priceUsd6: string) {
     if (!event) {
       return;
     }
@@ -155,32 +185,92 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     setMessage("创建订单中...");
 
     try {
-      const order = await createOrder({
-        eventId: event.id,
-        ticketTypeId,
-        buyerWallet: address,
-        amountWei: priceWei
-      });
+      let hash: `0x${string}`;
+      if (paymentToken === "AVAX") {
+        const quote = await publicClient.readContract({
+          address: ticketPassAddress,
+          abi: ticketPassAbi,
+          functionName: "quoteNativePriceWei",
+          args: [BigInt(event.id), BigInt(ticketTypeId)]
+        });
+        const expectedWei = quote as bigint;
+        const maxPaymentWei = (expectedWei * 101n) / 100n;
 
-      setMessage("发起链上购票交易...");
-      const hash = await writeContractAsync({
-        account: address,
-        address: ticketPassAddress,
-        abi: ticketPassAbi,
-        functionName: "buyTicket",
-        args: [BigInt(event.id), BigInt(ticketTypeId)],
-        value: BigInt(priceWei),
-        chainId: targetChainId
-      });
+        const order = await createOrder({
+          eventId: event.id,
+          ticketTypeId,
+          buyerWallet: address,
+          paymentToken: "AVAX",
+          amountWei: expectedWei.toString()
+        });
 
-      await publicClient.waitForTransactionReceipt({ hash });
-      await confirmOrder(order.id, hash);
+        setMessage("发起 AVAX 购票交易...");
+        hash = await writeContractAsync({
+          account: address,
+          address: ticketPassAddress,
+          abi: ticketPassAbi,
+          functionName: "buyTicketWithNative",
+          args: [BigInt(event.id), BigInt(ticketTypeId), maxPaymentWei],
+          value: maxPaymentWei,
+          chainId: targetChainId
+        });
+
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error("AVAX 购票交易失败（已回滚）");
+        }
+        await confirmOrder(order.id, hash);
+      } else {
+        const tokenAddress = paymentToken === "USDT" ? usdtAddress : usdcAddress;
+        if (!tokenAddress) {
+          setMessage(`${paymentToken} 合约地址未配置`);
+          return;
+        }
+        const amount = BigInt(priceUsd6);
+
+        const order = await createOrder({
+          eventId: event.id,
+          ticketTypeId,
+          buyerWallet: address,
+          paymentToken,
+          amountWei: amount.toString()
+        });
+
+        setMessage(`授权 ${paymentToken} 中...`);
+        const approveHash = await writeContractAsync({
+          account: address,
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [ticketPassAddress, amount],
+          chainId: targetChainId
+        });
+        const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        if (approveReceipt.status !== "success") {
+          throw new Error(`${paymentToken} 授权交易失败（已回滚）`);
+        }
+
+        setMessage(`发起 ${paymentToken} 购票交易...`);
+        hash = await writeContractAsync({
+          account: address,
+          address: ticketPassAddress,
+          abi: ticketPassAbi,
+          functionName: "buyTicketWithERC20",
+          args: [BigInt(event.id), BigInt(ticketTypeId), tokenAddress, amount],
+          chainId: targetChainId
+        });
+        const buyReceipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (buyReceipt.status !== "success") {
+          throw new Error(`${paymentToken} 购票交易失败（已回滚）`);
+        }
+        await confirmOrder(order.id, hash);
+      }
 
       setMessage(`购票成功，交易哈希: ${hash}`);
       await refetch();
       await refetchMyActivities();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "购票失败");
+      setMessage(getErrorMessage(error, "购票失败"));
     }
   }
 
@@ -211,7 +301,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       await refetch();
       await refetchMyActivities();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "评价提交失败");
+      setMessage(getErrorMessage(error, "评价提交失败"));
     }
   }
 
@@ -239,7 +329,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       await refetch();
       await refetchMyActivities();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "签到失败");
+      setMessage(getErrorMessage(error, "签到失败"));
     }
   }
 
@@ -311,11 +401,23 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
           {!isOrganizer && (viewerStage === "guest" || viewerStage === "not_purchased") && (
             <>
               <p className="status-title">未购买</p>
+              <label className="field">
+                <span>支付方式</span>
+                <select value={paymentToken} onChange={(e) => setPaymentToken(e.target.value as PaymentToken)}>
+                  <option value="AVAX">AVAX（实时换算）</option>
+                  <option value="USDT" disabled={!stableAvailable.USDT}>
+                    USDT{stableAvailable.USDT ? "" : "（未配置）"}
+                  </option>
+                  <option value="USDC" disabled={!stableAvailable.USDC}>
+                    USDC{stableAvailable.USDC ? "" : "（未配置）"}
+                  </option>
+                </select>
+              </label>
               {event.ticketTypes.length === 0 && <p>暂无票档</p>}
               {event.ticketTypes.map((ticket) => (
                 <div key={ticket.id} className="ticket-row">
                   <span>{ticket.name}</span>
-                  <span>{formatEther(BigInt(ticket.priceWei))} AVAX</span>
+                  <span>{formatUsd6(ticket.priceWei)}</span>
                   <button onClick={() => void buy(ticket.id, ticket.priceWei)}>立即购票</button>
                 </div>
               ))}

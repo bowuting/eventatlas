@@ -3,5 +3,8 @@
 /* eslint-disable */
 import type * as reviewAnchorSol from "./ReviewAnchor.sol";
 export type { reviewAnchorSol };
+import type * as ticketPassSol from "./TicketPass.sol";
+export type { ticketPassSol };
+import type * as mocks from "./mocks";
+export type { mocks };
 export type { AttendanceProof } from "./AttendanceProof";
-export type { TicketPass } from "./TicketPass";

@@ -1,5 +1,12 @@
 import axios from "axios";
-import type { EventItem, MyActivityItem, MyActivityStatus, OrderItem, TicketType } from "../types";
+import type {
+  EventItem,
+  MyActivityItem,
+  MyActivityStatus,
+  OrderItem,
+  OrganizerProfile,
+  TicketType
+} from "../types";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000"
@@ -101,6 +108,7 @@ export async function createOrder(payload: {
   ticketTypeId: number;
   buyerWallet: string;
   amountWei: string;
+  paymentToken: "AVAX" | "USDT" | "USDC";
 }) {
   const { data } = await api.post<{ order: OrderItem }>("/orders", payload);
   return data.order;
@@ -180,6 +188,20 @@ export async function fetchMyActivities(wallet: string, status: MyActivityStatus
     params: { status }
   });
   return data.items;
+}
+
+export async function fetchOrganizerProfile(wallet: string) {
+  const { data } = await api.get<{ profile: OrganizerProfile | null }>(`/organizer/profile/${wallet}`);
+  return data.profile;
+}
+
+export async function saveOrganizerProfile(payload: {
+  wallet: string;
+  name: string;
+  logoUrl: string;
+}) {
+  const { data } = await api.put<{ profile: OrganizerProfile }>("/organizer/profile", payload);
+  return data.profile;
 }
 
 export async function uploadImage(file: File) {

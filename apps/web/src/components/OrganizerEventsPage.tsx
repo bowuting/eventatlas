@@ -6,9 +6,10 @@ import type { EventItem } from "../types";
 type Props = {
   organizerWallet?: string;
   onOpenEvent: (eventId: number) => void;
+  onCreate?: () => void;
 };
 
-export function OrganizerEventsPage({ organizerWallet, onOpenEvent }: Props) {
+export function OrganizerEventsPage({ organizerWallet, onOpenEvent, onCreate }: Props) {
   const { data: events = [], isLoading, refetch } = useQuery({
     queryKey: ["events"],
     queryFn: fetchEvents
@@ -23,8 +24,8 @@ export function OrganizerEventsPage({ organizerWallet, onOpenEvent }: Props) {
   if (!wallet) {
     return (
       <section className="card">
-        <h2>我组织的活动</h2>
-        <p style={{ marginTop: 10 }}>请先连接钱包，再查看你创建的活动。</p>
+        <h2>活动管理</h2>
+        <p style={{ marginTop: 10 }}>请先连接钱包，再管理你创建的活动。</p>
       </section>
     );
   }
@@ -32,7 +33,14 @@ export function OrganizerEventsPage({ organizerWallet, onOpenEvent }: Props) {
   return (
     <section className="card">
       <div className="section-head">
-        <h2>我组织的活动</h2>
+        <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+          {onCreate && (
+            <button className="ghost-button" onClick={onCreate}>
+              创建活动
+            </button>
+          )}
+          <h2>活动管理</h2>
+        </div>
         <button className="ghost-button" onClick={() => void refetch()}>
           刷新
         </button>

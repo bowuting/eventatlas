@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatEther } from "viem";
 import { fetchMyActivities } from "../services/api";
 import type { MyActivityItem, MyActivityStatus } from "../types";
 
@@ -34,8 +33,8 @@ export function MyActivitiesPage({ wallet, onOpenEvent }: Props) {
   if (!wallet) {
     return (
       <section className="card">
-        <h2>我的活动</h2>
-        <p>请先连接钱包，再查看你的活动状态。</p>
+        <h2>我参加的</h2>
+        <p>请先连接钱包，再查看你参加的活动状态。</p>
       </section>
     );
   }
@@ -43,7 +42,7 @@ export function MyActivitiesPage({ wallet, onOpenEvent }: Props) {
   return (
     <section className="card">
       <div className="section-head">
-        <h2>我的活动</h2>
+        <h2>我参加的</h2>
         <button className="ghost-button" onClick={() => void refetch()}>
           刷新
         </button>
@@ -72,9 +71,7 @@ export function MyActivitiesPage({ wallet, onOpenEvent }: Props) {
               <h3>{item.title}</h3>
               <p>{new Date(item.startAt).toLocaleString()}</p>
               <p>{item.address}</p>
-              <p>
-                已购 {item.confirmedOrderCount} 张 / 总计 {formatEther(BigInt(item.totalAmountWei))} AVAX
-              </p>
+              <p>已购 {item.confirmedOrderCount} 张</p>
             </div>
             <div className="activity-meta">
               <span className="status-pill">{statusLabel[item.status]}</span>

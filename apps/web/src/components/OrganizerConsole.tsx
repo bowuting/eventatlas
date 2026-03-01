@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useState } from "react";
-import { parseEther } from "viem";
 import { publishEvent, uploadImage } from "../services/api";
 
 type Props = {
@@ -9,7 +8,7 @@ type Props = {
 
 type TicketDraft = {
   name: string;
-  priceAvax: string;
+  priceUsd: string;
   supply: string;
   saleStart: string;
   saleEnd: string;
@@ -28,12 +27,22 @@ function toDatetimeLocalValue(date: Date) {
 function createDefaultTicket(now: Date, eventStart: Date): TicketDraft {
   return {
     name: "General",
-    priceAvax: "0.01",
+    priceUsd: "10.00",
     supply: "100",
     saleStart: toDatetimeLocalValue(new Date(now.getTime() - 60 * 60 * 1000)),
     saleEnd: toDatetimeLocalValue(eventStart),
     transferable: false
   };
+}
+
+function parseUsdTo6(value: string) {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error("票价格式无效，请输入最多 6 位小数的美元金额");
+  }
+
+  const [intPart, fracPart = ""] = normalized.split(".");
+  return `${intPart}${fracPart.padEnd(6, "0")}`;
 }
 
 export function OrganizerConsole({ connectedWallet, onCreated }: Props) {
@@ -148,7 +157,7 @@ export function OrganizerConsole({ connectedWallet, onCreated }: Props) {
             };
           })(),
           name: ticket.name,
-          priceWei: parseEther(ticket.priceAvax).toString(),
+          priceWei: parseUsdTo6(ticket.priceUsd),
           supply: Number(ticket.supply),
           transferable: ticket.transferable
         }))
@@ -297,13 +306,13 @@ export function OrganizerConsole({ connectedWallet, onCreated }: Props) {
                   />
                 </label>
                 <label className="field">
-                  <span>价格（AVAX）</span>
+                  <span>价格（USD）</span>
                   <input
                     type="number"
                     min="0"
-                    step="0.000001"
-                    value={ticket.priceAvax}
-                    onChange={(e) => updateTicket(index, { priceAvax: e.target.value })}
+                    step="0.01"
+                    value={ticket.priceUsd}
+                    onChange={(e) => updateTicket(index, { priceUsd: e.target.value })}
                     required
                   />
                 </label>

@@ -42,6 +42,7 @@ export type OrderItem = {
   ticketTypeId: number;
   buyerWallet: string;
   amountWei: string;
+  paymentToken: "AVAX" | "USDT" | "USDC";
   txHash?: string;
   tokenId?: string;
   status: "pending" | "confirmed" | "failed";
@@ -63,4 +64,12 @@ export type MyActivityItem = {
   checkinStatus?: "pending" | "confirmed" | "failed";
   reviewStatus?: "pending" | "confirmed" | "failed";
   status: MyActivityStatus;
+};
+
+export type OrganizerProfile = {
+  wallet: string;
+  name: string;
+  logoUrl: string;
+  createdAt: string;
+  updatedAt: string;
 };

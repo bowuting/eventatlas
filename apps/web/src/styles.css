@@ -119,6 +119,26 @@ p {
   margin: 0;
 }
 
+.entry-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.entry-card {
+  border: 1px solid #dce4e1;
+  border-radius: 14px;
+  background: #fbfcfc;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.entry-card h3 {
+  margin: 0;
+}
+
 .page-head {
   display: flex;
   justify-content: space-between;
@@ -348,6 +368,42 @@ button:disabled {
 .status-line {
   margin-top: 10px;
   font-size: 13px;
+}
+
+.organizer-guide {
+  margin-top: 12px;
+  border: 1px solid #dce4e1;
+  border-radius: 14px;
+  background: #fbfcfc;
+  padding: 12px;
+}
+
+.organizer-guide-title {
+  font-weight: 600;
+  color: #20344a;
+  margin-bottom: 10px;
+}
+
+.organizer-logo-preview-wrap {
+  margin-top: 6px;
+  border: 1px solid #e0dbcd;
+  border-radius: 12px;
+  padding: 8px;
+  background: #fffef9;
+}
+
+.organizer-logo-preview {
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
+  object-fit: cover;
+  border: 1px solid #d9d3c7;
+}
+
+.organizer-guide-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .notice-line {

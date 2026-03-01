@@ -17,7 +17,8 @@ const createOrderSchema = z.object({
   eventId: z.number().int().positive(),
   ticketTypeId: z.number().int().positive(),
   buyerWallet: z.string().min(1),
-  amountWei: z.string().regex(/^\d+$/)
+  amountWei: z.string().regex(/^\d+$/),
+  paymentToken: z.enum(["AVAX", "USDT", "USDC"]).default("AVAX")
 });
 
 const confirmOrderSchema = z.object({
@@ -42,12 +43,17 @@ ordersRouter.post("/orders", async (req, res) => {
       return res.status(404).json({ message: "ticket type not found" });
     }
 
-    if (ticket.priceWei !== parsed.data.amountWei) {
-      return badRequest(res, "amountWei does not match ticket price");
+    if (parsed.data.amountWei === "0") {
+      return badRequest(res, "amountWei must be greater than zero");
     }
+
+    const normalizedAmountWei = parsed.data.paymentToken === "AVAX"
+      ? parsed.data.amountWei
+      : ticket.priceWei;
 
     const order = await createOrder({
       ...parsed.data,
+      amountWei: normalizedAmountWei,
       buyerWallet: parsed.data.buyerWallet.toLowerCase()
     });
 

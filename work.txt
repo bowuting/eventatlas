@@ -1,35 +1,73 @@
-  一、已完成（代码已实现）
+一、当前已完成（已落地）
 
-  1. 基础工程搭建（Monorepo、前后端、合约包、共享 ABI、环境配置）已完成
-  2. 活动发布（创建活动、创建票种）已完成
-  3. 链上购票（TicketPass：注册活动、配置票种、buyTicket）已完成
-  4. 订单系统基础（创建订单、按 txHash 确认、状态回填）已完成
-  5. 签到系统核心（动态 nonce 码、过期校验、防重放、重复签到拦截）已完成
-  6. 到场证明（AttendanceProof 铸造，SBT 风格不可转让）已完成
-  7. 评价资格校验（仅 AttendanceProof 持有者可评价）已完成
-  8. 评分上链（ReviewAnchor，平台钱包代付 gas）已完成
-  9. 评价内容链下存储（PostgreSQL reviews 表，含链上状态字段）已完成
-  10. PostgreSQL 持久化（events/ticket_types/orders/checkin_nonces/checkins/reviews）已完成
-  11. 前端基础页面（发布、购票、签到、评价）已完成
-  12. 合约测试与构建（TicketPass/AttendanceProof/ReviewAnchor）已完成
+1. 基础架构已完成：Monorepo（apps/web、apps/api、packages/contracts、packages/shared）。
+2. 组织者/用户页面已分流，导航文案已调整：
+   - 活动列表 -> 活动广场
+   - 我的活动 -> 我参加的
+   - 新增 我要组织活动（组织者入口）
+3. `#/organizer` 页面已改为简洁版：默认活动管理，左上角创建活动按钮。
+4. 组织者资料能力已完成：
+   - 首次引导上传组织者名称和 logo
+   - 后端持久化（`organizer_profiles` 表 + API）
+5. 活动发布/票档发布已完成（含链上 register/configure 同步）。
+6. 多币支付已完成（USD 定价）：
+   - AVAX（Chainlink AVAX/USD 实时报价）
+   - USDT/USDC（稳定币支付）
+   - 订单新增 `payment_token`，下单/确认流程已打通
+7. 退款规则已完成（按既定业务）：
+   - 开始前 2 小时可申请退款，之后不允许
+   - 退款前先作废门票（burn）
+   - 转让后不允许普通退款
+   - 已签到不允许普通退款
+   - 活动取消支持全额退款（组织者/平台触发）
+8. 分账与结算已完成：
+   - 活动结束后平台 5%，组织者 95%
+   - 按支付币种分别结算（AVAX + ERC20）
+9. 自动结算已完成（后端 worker）：
+   - 定时扫描并调用 `settleEvent`
+   - 结算状态落库 `event_settlements`
+   - 失败自动重试
+10. 结算出款模式已改为“自动直达账户”：
+   - `settleEvent` 内直接打款到平台账户 + 组织者账户
+   - 不再需要 `claimPlatform* / claimOrganizer*` 手动提现
+   - 新增 `platformTreasury`（可配置平台收款地址）
+11. 合约测试与构建通过（当前 `@eventatlas/contracts test` 通过）。
 
-  二、部分完成（MVP 可用，但有增强空间）
+二、当前待完善（建议下一步）
 
-  1. 签到“二维码扫码”形态：当前是动态码流程，扫码 UI/摄像头识别未做 部分完成
-  2. 组织者后台统计：基础数据可查，完整可视化看板未做 部分完成
-  3. 钱包登录：有钱包连接，但完整 nonce 验签登录体系未打通 部分完成
+1. 结算可观测性增强：
+   - 提供“单活动结算状态”API（链上 + 数据库联合视图）
+   - 前端活动管理页展示结算状态、失败原因、重试次数
+2. 结算任务筛选优化：
+   - 当前可能出现“数据库时间已到但链上未到”导致 `EventNotEnded` 重试日志
+   - 建议增加链上结束时间对账/容错机制，减少无效重试
+3. 链上事件订阅 worker（订单确认、签到、评价、结算异步回填）未完成。
+4. 钱包登录安全增强（nonce 验签登录）未完成。
+5. 评价提交用户签名授权（防代付场景地址冒用）未完成。
+6. 地图/时间线、AI 推荐、信誉排序等增强模块未完成。
 
-  三、未完成（下一阶段）
+三、部署与配置关键项（当前版本）
 
-  1. 地图与时间线（/users/me/map、/users/me/timeline）未完成
-  2. AI 推荐（活动/社区/人群匹配）未完成
-  3. 信誉评分与首页排序算法 未完成
-  4. USDT 支付通道 未完成
-  5. 退款机制完整实现 未完成
-  6. 评论哈希单独锚定策略优化（现在评分+hash已上链，仍可扩展）未完成
-  7. 评价提交的用户签名授权（防平台代付场景地址冒用）未完成
-  8. 链上事件订阅 worker（异步回填/重试）未完成
-  9. 社交、积分、DAO 等扩展模块 未完成
+1. `PLATFORM_TREASURY`：平台收款地址（不填默认部署者）。
+2. `AVAX_USD_PRICE_FEED`、`USDT_ADDRESS`、`USDC_ADDRESS`：支付配置必填。
+3. 结算 worker 开关：
+   - `SETTLEMENT_WORKER_ENABLED`
+   - `SETTLEMENT_WORKER_INTERVAL_MS`
+   - `SETTLEMENT_WORKER_BATCH_SIZE`
 
-  AVAX_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc
-AVAX_EXPLORER_URL=https://testnet.snowtrace.io
+四、备注
+
+1. Avalanche C-Chain 主网 USDT 地址：
+   `0xc7198437980c041c805A1EDcbA50c1Ce5db95118`
+
+五、原始任务清单对照（保留）
+
+1. 地图与时间线（`/users/me/map`、`/users/me/timeline`）: 未完成
+2. AI 推荐（活动/社区/人群匹配）: 未完成
+3. 信誉评分与首页排序算法: 未完成
+4. USDT 支付通道: 已完成
+5. 退款机制完整实现: 已完成（含退款窗口、转让后限制、已签到限制、取消活动全额退款）
+6. 评论哈希单独锚定策略优化（现在评分+hash已上链，仍可扩展）: 未完成
+7. 评价提交的用户签名授权（防平台代付场景地址冒用）: 未完成
+8. 链上事件订阅 worker（异步回填/重试）: 未完成
+9. 社交、积分、DAO 等扩展模块: 未完成

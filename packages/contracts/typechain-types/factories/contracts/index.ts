@@ -2,5 +2,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export * as reviewAnchorSol from "./ReviewAnchor.sol";
+export * as ticketPassSol from "./TicketPass.sol";
+export * as mocks from "./mocks";
 export { AttendanceProof__factory } from "./AttendanceProof__factory";
-export { TicketPass__factory } from "./TicketPass__factory";

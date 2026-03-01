@@ -70,13 +70,23 @@ class ChainService {
     return new Contract(this.getReviewAnchorAddress(), reviewAnchorAbi, this.provider);
   }
 
-  async registerEvent(eventId: number, organizerWallet: string) {
+  async registerEvent(eventId: number, organizerWallet: string, startAt: string, endAt: string) {
     const contract = this.getTicketPassWriteContract();
     const tx = await contract.registerEvent(eventId, organizerWallet);
     const receipt = await tx.wait();
+
+    const timeTx = await contract.setEventTimeRange(
+      BigInt(eventId),
+      BigInt(Math.floor(new Date(startAt).getTime() / 1000)),
+      BigInt(Math.floor(new Date(endAt).getTime() / 1000))
+    );
+    const timeReceipt = await timeTx.wait();
+
     return {
       txHash: tx.hash,
-      blockNumber: receipt?.blockNumber
+      blockNumber: receipt?.blockNumber,
+      setTimeTxHash: timeTx.hash,
+      setTimeBlockNumber: timeReceipt?.blockNumber
     };
   }
 
@@ -129,6 +139,27 @@ class ChainService {
     }
 
     throw new Error("TicketMinted event not found in tx receipt");
+  }
+
+  async isEventCanceled(eventId: number) {
+    const contract = this.getTicketPassReadContract();
+    return Boolean(await contract.eventCanceled(BigInt(eventId)));
+  }
+
+  async isEventSettled(eventId: number) {
+    const contract = this.getTicketPassReadContract();
+    return Boolean(await contract.eventSettled(BigInt(eventId)));
+  }
+
+  async settleEvent(eventId: number) {
+    const contract = this.getTicketPassWriteContract();
+    const tx = await contract.settleEvent(BigInt(eventId));
+    const receipt = await tx.wait();
+
+    return {
+      txHash: tx.hash,
+      blockNumber: receipt?.blockNumber
+    };
   }
 
   async hasAttendanceProof(eventId: number, userWallet: string) {

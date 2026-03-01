@@ -11,8 +11,8 @@ import "./styles.css";
 
 type Route =
   | { name: "home" }
-  | { name: "create" }
   | { name: "events" }
+  | { name: "organizerCreate" }
   | { name: "organizerEvents" }
   | { name: "checkinBoard"; eventId: number }
   | { name: "eventDetail"; eventId: number; checkinNonce?: string }
@@ -46,13 +46,13 @@ function parseHashRoute(hash: string): Route {
     };
   }
 
-  if (hash === "#/create") {
-    return { name: "create" };
-  }
   if (hash === "#/events") {
     return { name: "events" };
   }
-  if (hash === "#/organizer-events") {
+  if (hash === "#/organizer/create" || hash === "#/create") {
+    return { name: "organizerCreate" };
+  }
+  if (hash === "#/organizer" || hash === "#/organizer/events" || hash === "#/organizer-events") {
     return { name: "organizerEvents" };
   }
   if (hash === "#/me") {
@@ -83,9 +83,10 @@ export default function App() {
   function navigate(
     path:
       | "/"
-      | "/create"
       | "/events"
-      | "/organizer-events"
+      | "/organizer"
+      | "/organizer/create"
+      | "/organizer/events"
       | "/me"
       | `/events/${number}`
       | `/checkin-board/${number}`
@@ -94,13 +95,18 @@ export default function App() {
     setRoute(parseHashRoute(window.location.hash));
   }
 
-  function navigateCreate() {
+  function navigateOrganizerPortal() {
+    setNotice("");
+    navigate("/organizer");
+  }
+
+  function navigateOrganizerCreate() {
     if (!isConnected) {
       setNotice("请先连接钱包，再进入活动创建");
       return;
     }
     setNotice("");
-    navigate("/create");
+    navigate("/organizer/create");
   }
 
   function renderRoute() {
@@ -121,9 +127,9 @@ export default function App() {
               {isConnected && address && <span>地址: {address.slice(0, 6)}...{address.slice(-4)}</span>}
             </div>
             <div className="landing-actions">
-              <button onClick={() => navigate("/events")}>浏览活动列表</button>
-              <button className="ghost-button" onClick={navigateCreate}>
-                进入活动创建
+              <button onClick={() => navigate("/events")}>浏览活动广场</button>
+              <button className="ghost-button" onClick={navigateOrganizerPortal}>
+                进入我要组织活动
               </button>
             </div>
             {notice && <p className="notice-line">{notice}</p>}
@@ -140,14 +146,14 @@ export default function App() {
             </article>
             <article className="landing-card">
               <h3>用户资产沉淀</h3>
-              <p>支持我的活动状态视图：待参加、待评价、已完成。</p>
+              <p>支持我参加的活动状态视图：待参加、待评价、已完成。</p>
             </article>
           </section>
         </>
       );
     }
 
-    if (route.name === "create") {
+    if (route.name === "organizerCreate") {
       return (
         <>
           <header className="card page-head">
@@ -172,7 +178,13 @@ export default function App() {
     }
 
     if (route.name === "organizerEvents") {
-      return <OrganizerEventsPage organizerWallet={address} onOpenEvent={(eventId) => navigate(`/events/${eventId}`)} />;
+      return (
+        <OrganizerEventsPage
+          organizerWallet={address}
+          onCreate={navigateOrganizerCreate}
+          onOpenEvent={(eventId) => navigate(`/events/${eventId}`)}
+        />
+      );
     }
 
     if (route.name === "checkinBoard") {
@@ -210,22 +222,7 @@ export default function App() {
               navigate("/events");
             }}
           >
-            活动列表
-          </button>
-          <button
-            className={route.name === "organizerEvents" ? "tab-button active" : "tab-button"}
-            onClick={() => {
-              setNotice("");
-              navigate("/organizer-events");
-            }}
-          >
-            我组织的活动
-          </button>
-          <button
-            className={route.name === "create" ? "tab-button active" : "tab-button"}
-            onClick={navigateCreate}
-          >
-            创建活动
+            活动广场
           </button>
           <button
             className={route.name === "me" ? "tab-button active" : "tab-button"}
@@ -234,7 +231,20 @@ export default function App() {
               navigate("/me");
             }}
           >
-            我的活动
+            我参加的
+          </button>
+          <button
+            className={
+              route.name === "organizerCreate" || route.name === "organizerEvents"
+                ? "tab-button active"
+                : "tab-button"
+            }
+            onClick={() => {
+              setNotice("");
+              navigateOrganizerPortal();
+            }}
+          >
+            我要组织活动
           </button>
         </nav>
         <TopWalletControl />
@@ -242,12 +252,17 @@ export default function App() {
 
       {route.name === "eventDetail" && (
         <button className="ghost-button back-button" onClick={() => navigate("/events")}>
-          ← 返回活动列表
+          ← 返回活动广场
         </button>
       )}
       {route.name === "checkinBoard" && (
         <button className="ghost-button back-button" onClick={() => navigate(`/events/${route.eventId}`)}>
           ← 返回活动详情
+        </button>
+      )}
+      {route.name === "organizerCreate" && (
+        <button className="ghost-button back-button" onClick={() => navigate("/organizer")}>
+          ← 返回活动管理
         </button>
       )}
 

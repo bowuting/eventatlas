@@ -4,6 +4,7 @@ import type {
   CheckinItem,
   CheckinStatus,
   EventItem,
+  OrganizerProfileItem,
   OrderItem,
   OrderStatus,
   ReviewItem,
@@ -60,6 +61,7 @@ type OrderRow = {
   ticket_type_id: string;
   buyer_wallet: string;
   amount_wei: string;
+  payment_token: "AVAX" | "USDT" | "USDC";
   tx_hash: string | null;
   token_id: string | null;
   status: OrderStatus;
@@ -100,6 +102,28 @@ type ReviewRow = {
   onchain_tx_hash: string | null;
   onchain_error: string | null;
   onchain_submitted_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
+type EventSettlementStatus = "pending" | "settled" | "failed" | "canceled";
+
+type EventSettlementRow = {
+  event_id: string;
+  status: EventSettlementStatus;
+  tx_hash: string | null;
+  error: string | null;
+  attempts: number;
+  last_attempt_at: Date | string | null;
+  settled_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
+type OrganizerProfileRow = {
+  wallet: string;
+  name: string;
+  logo_url: string;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -171,6 +195,7 @@ function mapOrderRow(row: OrderRow): OrderItem {
     ticketTypeId: Number(row.ticket_type_id),
     buyerWallet: row.buyer_wallet,
     amountWei: row.amount_wei,
+    paymentToken: row.payment_token,
     txHash: row.tx_hash ?? undefined,
     tokenId: row.token_id ?? undefined,
     status: row.status,
@@ -206,6 +231,16 @@ function mapReviewRow(row: ReviewRow): ReviewItem {
     onchainTxHash: row.onchain_tx_hash ?? undefined,
     onchainError: row.onchain_error ?? undefined,
     onchainSubmittedAt: row.onchain_submitted_at ? asIso(row.onchain_submitted_at) : undefined,
+    createdAt: asIso(row.created_at),
+    updatedAt: asIso(row.updated_at)
+  };
+}
+
+function mapOrganizerProfileRow(row: OrganizerProfileRow): OrganizerProfileItem {
+  return {
+    wallet: row.wallet,
+    name: row.name,
+    logoUrl: row.logo_url,
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at)
   };
@@ -286,6 +321,7 @@ export async function initDatabase() {
       ticket_type_id BIGINT NOT NULL REFERENCES ticket_types(id) ON DELETE RESTRICT,
       buyer_wallet TEXT NOT NULL,
       amount_wei TEXT NOT NULL,
+      payment_token TEXT NOT NULL CHECK (payment_token IN ('AVAX', 'USDT', 'USDC')) DEFAULT 'AVAX',
       tx_hash TEXT,
       token_id TEXT,
       status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'failed')),
@@ -339,6 +375,30 @@ export async function initDatabase() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organizer_profiles (
+      wallet TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      logo_url TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS event_settlements (
+      event_id BIGINT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'settled', 'failed', 'canceled')) DEFAULT 'pending',
+      tx_hash TEXT,
+      error TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TIMESTAMPTZ,
+      settled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
   await pool.query("CREATE INDEX IF NOT EXISTS idx_ticket_types_event_id ON ticket_types(event_id);");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_event_id ON orders(event_id);");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_buyer_wallet ON orders(buyer_wallet);");
@@ -347,6 +407,9 @@ export async function initDatabase() {
   await pool.query("CREATE INDEX IF NOT EXISTS idx_checkins_user_wallet ON checkins(user_wallet);");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_reviews_event_id ON reviews(event_id);");
   await pool.query("CREATE INDEX IF NOT EXISTS idx_reviews_user_wallet ON reviews(user_wallet);");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_organizer_profiles_wallet ON organizer_profiles(wallet);");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_event_settlements_status ON event_settlements(status);");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_event_settlements_last_attempt_at ON event_settlements(last_attempt_at);");
 
   // Backward-compatible schema upgrades for existing databases.
   await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_status TEXT NOT NULL DEFAULT 'pending';");
@@ -358,6 +421,10 @@ export async function initDatabase() {
   await pool.query("ALTER TABLE ticket_types ADD COLUMN IF NOT EXISTS chain_tx_hash TEXT;");
   await pool.query("ALTER TABLE ticket_types ADD COLUMN IF NOT EXISTS chain_error TEXT;");
   await pool.query("ALTER TABLE ticket_types ADD COLUMN IF NOT EXISTS chain_synced_at TIMESTAMPTZ;");
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_token TEXT;");
+  await pool.query("UPDATE orders SET payment_token = 'AVAX' WHERE payment_token IS NULL;");
+  await pool.query("ALTER TABLE orders ALTER COLUMN payment_token SET DEFAULT 'AVAX';");
+  await pool.query("ALTER TABLE orders ALTER COLUMN payment_token SET NOT NULL;");
 }
 
 export async function listEventsWithTickets() {
@@ -591,17 +658,18 @@ export async function createOrder(input: {
   ticketTypeId: number;
   buyerWallet: string;
   amountWei: string;
+  paymentToken: "AVAX" | "USDT" | "USDC";
 }) {
   const result = await pool.query<OrderRow>(
     `
       INSERT INTO orders (
-        event_id, ticket_type_id, buyer_wallet, amount_wei, status
+        event_id, ticket_type_id, buyer_wallet, amount_wei, payment_token, status
       ) VALUES (
-        $1, $2, $3, $4, 'pending'
+        $1, $2, $3, $4, $5, 'pending'
       )
       RETURNING *
     `,
-    [input.eventId, input.ticketTypeId, input.buyerWallet, input.amountWei]
+    [input.eventId, input.ticketTypeId, input.buyerWallet, input.amountWei, input.paymentToken]
   );
 
   return mapOrderRow(result.rows[0]);
@@ -971,6 +1039,129 @@ export async function listUserActivities(
   }
 
   return mapped.filter((item) => item.status === status);
+}
+
+export async function getOrganizerProfile(wallet: string) {
+  const result = await pool.query<OrganizerProfileRow>(
+    `SELECT * FROM organizer_profiles WHERE wallet = $1`,
+    [wallet]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return mapOrganizerProfileRow(result.rows[0]);
+}
+
+export async function upsertOrganizerProfile(input: {
+  wallet: string;
+  name: string;
+  logoUrl: string;
+}) {
+  const result = await pool.query<OrganizerProfileRow>(
+    `
+      INSERT INTO organizer_profiles (wallet, name, logo_url)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (wallet)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        logo_url = EXCLUDED.logo_url,
+        updated_at = NOW()
+      RETURNING *
+    `,
+    [input.wallet, input.name, input.logoUrl]
+  );
+
+  return mapOrganizerProfileRow(result.rows[0]);
+}
+
+export async function listEventsReadyForSettlement(limit = 20) {
+  const safeLimit = Math.max(1, Math.min(limit, 200));
+  const result = await pool.query<{ id: string }>(
+    `
+      SELECT e.id
+      FROM events e
+      LEFT JOIN event_settlements s ON s.event_id = e.id
+      WHERE e.chain_status = 'synced'
+        AND e.end_at <= NOW()
+        AND (
+          s.event_id IS NULL
+          OR s.status IN ('pending', 'failed')
+        )
+        AND (
+          s.last_attempt_at IS NULL
+          OR s.last_attempt_at <= NOW() - INTERVAL '1 minute'
+        )
+      ORDER BY e.end_at ASC, e.id ASC
+      LIMIT $1
+    `,
+    [safeLimit]
+  );
+
+  return result.rows.map((row) => Number(row.id));
+}
+
+export async function markEventSettlementSettled(eventId: number, txHash?: string) {
+  await pool.query<EventSettlementRow>(
+    `
+      INSERT INTO event_settlements (
+        event_id, status, tx_hash, error, attempts, last_attempt_at, settled_at
+      ) VALUES (
+        $1, 'settled', $2, NULL, 1, NOW(), NOW()
+      )
+      ON CONFLICT (event_id)
+      DO UPDATE SET
+        status = 'settled',
+        tx_hash = COALESCE(EXCLUDED.tx_hash, event_settlements.tx_hash),
+        error = NULL,
+        attempts = event_settlements.attempts + 1,
+        last_attempt_at = NOW(),
+        settled_at = COALESCE(event_settlements.settled_at, NOW()),
+        updated_at = NOW()
+    `,
+    [eventId, txHash ?? null]
+  );
+}
+
+export async function markEventSettlementCanceled(eventId: number, error?: string) {
+  await pool.query<EventSettlementRow>(
+    `
+      INSERT INTO event_settlements (
+        event_id, status, tx_hash, error, attempts, last_attempt_at, settled_at
+      ) VALUES (
+        $1, 'canceled', NULL, $2, 1, NOW(), NULL
+      )
+      ON CONFLICT (event_id)
+      DO UPDATE SET
+        status = 'canceled',
+        error = $2,
+        attempts = event_settlements.attempts + 1,
+        last_attempt_at = NOW(),
+        updated_at = NOW()
+    `,
+    [eventId, error ?? null]
+  );
+}
+
+export async function markEventSettlementFailed(eventId: number, error: string) {
+  await pool.query<EventSettlementRow>(
+    `
+      INSERT INTO event_settlements (
+        event_id, status, tx_hash, error, attempts, last_attempt_at, settled_at
+      ) VALUES (
+        $1, 'failed', NULL, $2, 1, NOW(), NULL
+      )
+      ON CONFLICT (event_id)
+      DO UPDATE SET
+        status = 'failed',
+        error = $2,
+        attempts = event_settlements.attempts + 1,
+        last_attempt_at = NOW(),
+        updated_at = NOW()
+    `,
+    [eventId, error]
+  );
 }
 
 export async function closeDatabase() {

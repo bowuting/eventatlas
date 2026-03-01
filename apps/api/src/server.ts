@@ -4,14 +4,17 @@ import express from "express";
 import { env } from "./config/env.js";
 import { checkinRouter } from "./routes/checkin.js";
 import { eventsRouter } from "./routes/events.js";
+import { organizersRouter } from "./routes/organizers.js";
 import { ordersRouter } from "./routes/orders.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { uploadsRouter } from "./routes/uploads.js";
 import { usersRouter } from "./routes/users.js";
 import { initDatabase } from "./storage/postgres.js";
+import { startSettlementWorker } from "./workers/settlementWorker.js";
 
 async function startServer() {
   await initDatabase();
+  const stopSettlementWorker = startSettlementWorker();
 
   const app = express();
 
@@ -24,6 +27,7 @@ async function startServer() {
   });
 
   app.use(eventsRouter);
+  app.use(organizersRouter);
   app.use(ordersRouter);
   app.use(checkinRouter);
   app.use(reviewsRouter);
@@ -33,6 +37,12 @@ async function startServer() {
   app.listen(env.API_PORT, () => {
     console.log(`EventAtlas API listening on :${env.API_PORT}`);
   });
+
+  const shutdown = () => {
+    stopSettlementWorker();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 startServer().catch((error) => {

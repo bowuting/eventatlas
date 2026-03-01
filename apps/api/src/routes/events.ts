@@ -81,7 +81,12 @@ eventsRouter.post("/organizer/events", async (req, res) => {
     });
 
     try {
-      const chain = await chainService.registerEvent(item.id, item.organizerWallet);
+      const chain = await chainService.registerEvent(
+        item.id,
+        item.organizerWallet,
+        item.startAt,
+        item.endAt
+      );
       const updatedEvent = (await markEventChainSynced(item.id, chain.txHash)) ?? item;
       return res.status(201).json({ event: updatedEvent, chain });
     } catch (error) {
@@ -116,7 +121,12 @@ eventsRouter.post("/organizer/events/publish", async (req, res) => {
     let eventChainError: string | undefined;
 
     try {
-      eventChain = await chainService.registerEvent(event.id, event.organizerWallet);
+      eventChain = await chainService.registerEvent(
+        event.id,
+        event.organizerWallet,
+        event.startAt,
+        event.endAt
+      );
       persistedEvent = (await markEventChainSynced(event.id, eventChain.txHash)) ?? event;
     } catch (error) {
       eventChainError = error instanceof Error ? error.message : "unknown";

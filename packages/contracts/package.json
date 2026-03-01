@@ -9,6 +9,7 @@
     "test": "hardhat test",
     "deploy:fuji": "hardhat run scripts/deploy-ticket-pass.ts --network fuji",
     "deploy:fuji:ticket": "hardhat run scripts/deploy-ticket-pass.ts --network fuji",
+    "configure:fuji:ticket-payments": "hardhat run scripts/configure-ticket-pass-payments.ts --network fuji",
     "deploy:fuji:attendance": "hardhat run scripts/deploy-attendance-proof.ts --network fuji",
     "deploy:fuji:review": "hardhat run scripts/deploy-review-anchor.ts --network fuji",
     "lint": "echo 'contracts lint skipped'"
