@@ -5,6 +5,7 @@ import type {
   CheckinStatus,
   EventItem,
   OrganizerProfileItem,
+  OrderRefundStatus,
   OrderItem,
   OrderStatus,
   ReviewItem,
@@ -65,6 +66,10 @@ type OrderRow = {
   tx_hash: string | null;
   token_id: string | null;
   status: OrderStatus;
+  refund_status: OrderRefundStatus;
+  refund_tx_hash: string | null;
+  refund_error: string | null;
+  refunded_at: Date | string | null;
   created_at: Date | string;
 };
 
@@ -199,6 +204,10 @@ function mapOrderRow(row: OrderRow): OrderItem {
     txHash: row.tx_hash ?? undefined,
     tokenId: row.token_id ?? undefined,
     status: row.status,
+    refundStatus: row.refund_status,
+    refundTxHash: row.refund_tx_hash ?? undefined,
+    refundError: row.refund_error ?? undefined,
+    refundedAt: row.refunded_at ? asIso(row.refunded_at) : undefined,
     createdAt: asIso(row.created_at)
   };
 }
@@ -325,6 +334,10 @@ export async function initDatabase() {
       tx_hash TEXT,
       token_id TEXT,
       status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'failed')),
+      refund_status TEXT NOT NULL CHECK (refund_status IN ('none', 'pending', 'confirmed', 'failed')) DEFAULT 'none',
+      refund_tx_hash TEXT,
+      refund_error TEXT,
+      refunded_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -425,6 +438,13 @@ export async function initDatabase() {
   await pool.query("UPDATE orders SET payment_token = 'AVAX' WHERE payment_token IS NULL;");
   await pool.query("ALTER TABLE orders ALTER COLUMN payment_token SET DEFAULT 'AVAX';");
   await pool.query("ALTER TABLE orders ALTER COLUMN payment_token SET NOT NULL;");
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_status TEXT;");
+  await pool.query("UPDATE orders SET refund_status = 'none' WHERE refund_status IS NULL;");
+  await pool.query("ALTER TABLE orders ALTER COLUMN refund_status SET DEFAULT 'none';");
+  await pool.query("ALTER TABLE orders ALTER COLUMN refund_status SET NOT NULL;");
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_tx_hash TEXT;");
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_error TEXT;");
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;");
 }
 
 export async function listEventsWithTickets() {
@@ -679,6 +699,86 @@ export async function getOrderById(orderId: number) {
   const result = await pool.query<OrderRow>(
     `SELECT * FROM orders WHERE id = $1`,
     [orderId]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return mapOrderRow(result.rows[0]);
+}
+
+export async function listConfirmedOrdersByBuyerAndEvent(eventId: number, buyerWallet: string) {
+  const result = await pool.query<OrderRow>(
+    `
+      SELECT *
+      FROM orders
+      WHERE event_id = $1
+        AND buyer_wallet = $2
+        AND status = 'confirmed'
+        AND token_id IS NOT NULL
+      ORDER BY id DESC
+    `,
+    [eventId, buyerWallet]
+  );
+
+  return result.rows.map(mapOrderRow);
+}
+
+export async function markOrderRefundPending(orderId: number) {
+  const result = await pool.query<OrderRow>(
+    `
+      UPDATE orders
+      SET
+        refund_status = 'pending',
+        refund_error = NULL
+      WHERE id = $1
+      RETURNING *
+    `,
+    [orderId]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return mapOrderRow(result.rows[0]);
+}
+
+export async function markOrderRefundConfirmed(orderId: number, refundTxHash: string) {
+  const result = await pool.query<OrderRow>(
+    `
+      UPDATE orders
+      SET
+        refund_status = 'confirmed',
+        refund_tx_hash = $2,
+        refund_error = NULL,
+        refunded_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [orderId, refundTxHash]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return mapOrderRow(result.rows[0]);
+}
+
+export async function markOrderRefundFailed(orderId: number, refundTxHash: string, refundError: string) {
+  const result = await pool.query<OrderRow>(
+    `
+      UPDATE orders
+      SET
+        refund_status = 'failed',
+        refund_tx_hash = $2,
+        refund_error = $3
+      WHERE id = $1
+      RETURNING *
+    `,
+    [orderId, refundTxHash, refundError]
   );
 
   if (result.rowCount === 0) {
@@ -1006,6 +1106,7 @@ export async function listUserActivities(
         FROM orders o
         WHERE o.buyer_wallet = $1
           AND o.status = 'confirmed'
+          AND COALESCE(o.refund_status, 'none') <> 'confirmed'
         GROUP BY o.event_id
       )
       SELECT

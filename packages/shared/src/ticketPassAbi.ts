@@ -121,6 +121,13 @@ export const ticketPassAbi = [
     outputs: [{ name: "", type: "bool" }]
   },
   {
+    type: "function",
+    name: "ownerOf",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
     type: "event",
     name: "TicketMinted",
     anonymous: false,
@@ -139,6 +146,19 @@ export const ticketPassAbi = [
       { indexed: true, name: "user", type: "address" },
       { indexed: true, name: "eventId", type: "uint256" },
       { indexed: true, name: "ticketTypeId", type: "uint256" },
+      { indexed: false, name: "paymentToken", type: "address" },
+      { indexed: false, name: "paymentAmount", type: "uint256" }
+    ]
+  },
+  {
+    type: "event",
+    name: "TicketRefunded",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "user", type: "address" },
+      { indexed: true, name: "eventId", type: "uint256" },
+      { indexed: true, name: "ticketTypeId", type: "uint256" },
+      { indexed: false, name: "tokenId", type: "uint256" },
       { indexed: false, name: "paymentToken", type: "address" },
       { indexed: false, name: "paymentAmount", type: "uint256" }
     ]

@@ -119,6 +119,21 @@ export async function confirmOrder(orderId: number, txHash: string) {
   return data.order;
 }
 
+export async function confirmOrderRefund(orderId: number, txHash: string) {
+  const { data } = await api.post<{ order: OrderItem }>("/orders/refund/confirm", { orderId, txHash });
+  return data.order;
+}
+
+export async function fetchConfirmedOrdersByEvent(eventId: number, buyerWallet: string) {
+  const { data } = await api.get<{ items: OrderItem[] }>("/orders", {
+    params: {
+      eventId,
+      buyerWallet
+    }
+  });
+  return data.items;
+}
+
 export async function createCheckinCode(payload: { eventId: number; ttlSeconds: number }) {
   const { data } = await api.post<{ eventId: number; nonce: string; expiresAt: string }>("/checkin/code", payload);
   return data;

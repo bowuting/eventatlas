@@ -6,8 +6,10 @@ import { erc20Abi } from "viem";
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
 import {
   confirmOrder,
+  confirmOrderRefund,
   createOrder,
   fetchEventById,
+  fetchConfirmedOrdersByEvent,
   fetchEventReviews,
   fetchMyActivities,
   submitCheckin,
@@ -41,6 +43,20 @@ function formatUsd6(value: string) {
   const intPart = amount / 1_000_000n;
   const frac = (amount % 1_000_000n).toString().padStart(6, "0").slice(0, 2);
   return `$${intPart.toString()}.${frac}`;
+}
+
+function formatTokenAmount(orderAmountWei: string, token: PaymentToken) {
+  const amount = BigInt(orderAmountWei);
+  if (token === "USDT" || token === "USDC") {
+    const intPart = amount / 1_000_000n;
+    const frac = (amount % 1_000_000n).toString().padStart(6, "0").slice(0, 2);
+    return `${intPart.toString()}.${frac} ${token}`;
+  }
+  const avaxInt = amount / 1_000_000_000_000_000_000n;
+  const avaxFrac = ((amount % 1_000_000_000_000_000_000n) / 10_000_000_000_000_000n)
+    .toString()
+    .padStart(2, "0");
+  return `${avaxInt.toString()}.${avaxFrac} AVAX`;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -84,6 +100,70 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     queryFn: () => fetchMyActivities(normalizedAddress!, "all"),
     enabled: Boolean(normalizedAddress)
   });
+  const { data: hasOnchainValidTicket, isLoading: isValidTicketLoading, refetch: refetchValidTicket } = useQuery({
+    queryKey: ["has-valid-ticket", eventId, normalizedAddress],
+    enabled: Boolean(normalizedAddress && publicClient && ticketPassAddress),
+    queryFn: async () => {
+      if (!normalizedAddress || !publicClient || !ticketPassAddress) {
+        return false;
+      }
+      try {
+        const valid = await publicClient.readContract({
+          address: ticketPassAddress,
+          abi: ticketPassAbi,
+          functionName: "hasValidTicket",
+          args: [BigInt(eventId), normalizedAddress as `0x${string}`]
+        });
+        return Boolean(valid);
+      } catch {
+        return false;
+      }
+    }
+  });
+  const { data: myOrders = [], refetch: refetchMyOrders } = useQuery({
+    queryKey: ["orders", eventId, normalizedAddress],
+    queryFn: () => fetchConfirmedOrdersByEvent(eventId, normalizedAddress!),
+    enabled: Boolean(normalizedAddress)
+  });
+  const { data: refundableOrders = [] } = useQuery({
+    queryKey: ["refundable-orders", eventId, normalizedAddress, myOrders.map((item) => item.id).join(",")],
+    enabled: Boolean(normalizedAddress && publicClient && ticketPassAddress && myOrders.length > 0),
+    queryFn: async () => {
+      if (!normalizedAddress || !publicClient || !ticketPassAddress) {
+        return [];
+      }
+
+      const checks = await Promise.all(
+        myOrders.map(async (order) => {
+          if (!order.tokenId) {
+            return null;
+          }
+          if (order.refundStatus === "confirmed" || order.refundStatus === "pending") {
+            return null;
+          }
+
+          try {
+            const owner = await publicClient.readContract({
+              address: ticketPassAddress,
+              abi: ticketPassAbi,
+              functionName: "ownerOf",
+              args: [BigInt(order.tokenId)]
+            });
+
+            if (String(owner).toLowerCase() !== normalizedAddress) {
+              return null;
+            }
+
+            return order;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      return checks.filter((item): item is typeof myOrders[number] => Boolean(item));
+    }
+  });
   const myActivity = myActivities.find((item) => item.eventId === eventId);
   const myReview = normalizedAddress
     ? reviews.find((item) => item.userWallet.toLowerCase() === normalizedAddress)
@@ -93,12 +173,18 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     event &&
     event.organizerWallet.toLowerCase() === normalizedAddress
   );
-  const viewerStage: "guest" | "loading" | "not_purchased" | "to_attend" | "to_review" | "completed" =
-    !normalizedAddress
-      ? "guest"
-      : isMyActivitiesLoading
-        ? "loading"
-        : !myActivity
+  const missingValidTicket =
+    Boolean(myActivity) &&
+    myActivity?.status === "to_attend" &&
+    !isValidTicketLoading &&
+    hasOnchainValidTicket === false;
+  const viewerStage: "guest" | "loading" | "not_purchased" | "to_attend" | "to_review" | "completed" = !normalizedAddress
+    ? "guest"
+    : isMyActivitiesLoading
+      ? "loading"
+      : !myActivity
+        ? "not_purchased"
+        : missingValidTicket
           ? "not_purchased"
           : myActivity.status;
   const activeCheckinNonce = checkinNonce;
@@ -110,6 +196,8 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     USDT: Boolean(usdtAddress),
     USDC: Boolean(usdcAddress)
   };
+  const refundCutoffMs = new Date(event?.startAt ?? Date.now()).getTime() - 2 * 60 * 60 * 1000;
+  const refundWindowOpen = Date.now() < refundCutoffMs;
 
   useEffect(() => {
     if (!checkinNonce) {
@@ -269,6 +357,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       setMessage(`购票成功，交易哈希: ${hash}`);
       await refetch();
       await refetchMyActivities();
+      await refetchValidTicket();
     } catch (error) {
       setMessage(getErrorMessage(error, "购票失败"));
     }
@@ -328,8 +417,68 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       setMessage(`签到成功，Attendance tx: ${result.attendance.txHash}`);
       await refetch();
       await refetchMyActivities();
+      await refetchValidTicket();
     } catch (error) {
       setMessage(getErrorMessage(error, "签到失败"));
+    }
+  }
+
+  async function requestRefund(tokenId: string) {
+    if (!event) {
+      return;
+    }
+    if (!address) {
+      setMessage("请先连接钱包");
+      return;
+    }
+    if (!ticketPassAddress) {
+      setMessage("未配置 VITE_TICKET_PASS_ADDRESS");
+      return;
+    }
+
+    if (!chain || chain.id !== targetChainId) {
+      try {
+        setMessage(`正在请求切换网络到 ${targetChainId}...`);
+        await switchChainAsync({ chainId: targetChainId });
+      } catch {
+        setMessage(`请切换到 Avalanche 网络 ${targetChainId}（当前: ${chain?.id ?? "unknown"}）`);
+        return;
+      }
+    }
+
+    if (!publicClient) {
+      setMessage("链上客户端未就绪，请稍后重试");
+      return;
+    }
+
+    setMessage("提交退款申请中...");
+    try {
+      const order = myOrders.find((item) => item.tokenId === tokenId);
+      if (!order) {
+        throw new Error("未找到对应订单，请刷新后重试");
+      }
+
+      const hash = await writeContractAsync({
+        account: address,
+        address: ticketPassAddress,
+        abi: ticketPassAbi,
+        functionName: "requestRefund",
+        args: [BigInt(tokenId)],
+        chainId: targetChainId
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error("退款交易失败（已回滚）");
+      }
+      await confirmOrderRefund(order.id, hash);
+
+      setMessage(`退款成功，交易哈希: ${hash}`);
+      await refetch();
+      await refetchMyActivities();
+      await refetchMyOrders();
+      await refetchValidTicket();
+    } catch (error) {
+      setMessage(getErrorMessage(error, "退款失败"));
     }
   }
 
@@ -401,6 +550,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
           {!isOrganizer && (viewerStage === "guest" || viewerStage === "not_purchased") && (
             <>
               <p className="status-title">未购买</p>
+              {missingValidTicket && <p>你当前没有有效门票（可能已退款或已转让）。</p>}
               <label className="field">
                 <span>支付方式</span>
                 <select value={paymentToken} onChange={(e) => setPaymentToken(e.target.value as PaymentToken)}>
@@ -429,6 +579,31 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
               <p className="status-title">待参加</p>
               <p>你已购买该活动门票，等待到场签到。</p>
               <p>已购票数：{myActivity?.confirmedOrderCount ?? 0}</p>
+              <p>
+                退款规则：活动开始前 2 小时可申请退款，提交后链上直接原路退款（无需人工审核）。
+              </p>
+              {!refundWindowOpen && <p>当前已过退款申请截止时间。</p>}
+              {refundableOrders.length > 0 && (
+                <div className="stack" style={{ marginTop: 8 }}>
+                  {refundableOrders.map((order) => (
+                    <div key={order.id} className="ticket-row">
+                      <span>
+                        tokenId #{order.tokenId} / {formatTokenAmount(order.amountWei, order.paymentToken)}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!refundWindowOpen || !order.tokenId}
+                        onClick={() => order.tokenId && void requestRefund(order.tokenId)}
+                      >
+                        申请退款
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {myOrders.length > 0 && refundableOrders.length === 0 && (
+                <p>当前没有可退款门票（可能已转让、已退款或不在你钱包中）。</p>
+              )}
               {checkinCodeStatus === "checking" && <p>签到码校验中...</p>}
               {checkinCodeStatus === "valid" && activeCheckinNonce && (
                 <button type="button" onClick={() => void submitMyCheckin()}>

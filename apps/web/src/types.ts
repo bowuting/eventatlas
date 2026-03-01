@@ -46,6 +46,10 @@ export type OrderItem = {
   txHash?: string;
   tokenId?: string;
   status: "pending" | "confirmed" | "failed";
+  refundStatus: "none" | "pending" | "confirmed" | "failed";
+  refundTxHash?: string;
+  refundError?: string;
+  refundedAt?: string;
   createdAt: string;
 };
 

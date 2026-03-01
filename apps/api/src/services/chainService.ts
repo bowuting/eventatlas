@@ -141,6 +141,32 @@ class ChainService {
     throw new Error("TicketMinted event not found in tx receipt");
   }
 
+  async parseTicketRefundFromTx(txHash: string) {
+    const contract = this.getTicketPassReadContract();
+    const receipt = await this.provider.getTransactionReceipt(txHash);
+    if (!receipt) {
+      throw new Error("transaction not found");
+    }
+
+    for (const log of receipt.logs) {
+      try {
+        const parsed = contract.interface.parseLog(log);
+        if (parsed && parsed.name === "TicketRefunded") {
+          return {
+            user: String(parsed.args.user).toLowerCase(),
+            eventId: parsed.args.eventId.toString(),
+            ticketTypeId: parsed.args.ticketTypeId.toString(),
+            tokenId: parsed.args.tokenId.toString()
+          };
+        }
+      } catch {
+        // skip unrelated logs
+      }
+    }
+
+    throw new Error("TicketRefunded event not found in tx receipt");
+  }
+
   async isEventCanceled(eventId: number) {
     const contract = this.getTicketPassReadContract();
     return Boolean(await contract.eventCanceled(BigInt(eventId)));

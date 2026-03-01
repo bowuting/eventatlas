@@ -39,6 +39,7 @@ export type TicketTypeItem = {
 };
 
 export type OrderStatus = "pending" | "confirmed" | "failed";
+export type OrderRefundStatus = "none" | "pending" | "confirmed" | "failed";
 export type CheckinStatus = "pending" | "confirmed" | "failed";
 export type ReviewStatus = "pending" | "confirmed" | "failed";
 export type PaymentToken = "AVAX" | "USDT" | "USDC";
@@ -53,6 +54,10 @@ export type OrderItem = {
   txHash?: string;
   tokenId?: string;
   status: OrderStatus;
+  refundStatus: OrderRefundStatus;
+  refundTxHash?: string;
+  refundError?: string;
+  refundedAt?: string;
   createdAt: string;
 };
 
