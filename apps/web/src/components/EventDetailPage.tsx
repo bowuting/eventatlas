@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ticketPassAbi } from "@eventatlas/shared";
 import { formatEther } from "viem";
@@ -10,7 +10,8 @@ import {
   fetchEventReviews,
   fetchMyActivities,
   submitCheckin,
-  submitReview
+  submitReview,
+  validateCheckinCode
 } from "../services/api";
 
 type Props = {
@@ -39,6 +40,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
   const [rating, setRating] = useState("5");
   const [reviewContent, setReviewContent] = useState("");
   const [showReviewForm, setShowReviewForm] = useState(false);
+  const [checkinCodeStatus, setCheckinCodeStatus] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
 
   const { data: event, isLoading, refetch } = useQuery({
     queryKey: ["event", eventId],
@@ -78,6 +80,47 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     () => `${window.location.origin}/#/checkin-board/${eventId}`,
     [eventId]
   );
+
+  useEffect(() => {
+    if (!checkinNonce) {
+      setCheckinCodeStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setCheckinCodeStatus("checking");
+
+    void (async () => {
+      try {
+        const result = await validateCheckinCode({
+          eventId,
+          nonce: checkinNonce
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        if (result.valid) {
+          setCheckinCodeStatus("valid");
+          return;
+        }
+
+        setCheckinCodeStatus("invalid");
+        setMessage("该签到码已失效，请重新扫描组织者二维码");
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        setCheckinCodeStatus("invalid");
+        setMessage("该签到码校验失败，请重新扫描组织者二维码");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [checkinNonce, eventId]);
 
   async function buy(ticketTypeId: number, priceWei: string) {
     if (!event) {
@@ -180,7 +223,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       setMessage("请先连接钱包");
       return;
     }
-    if (!activeCheckinNonce) {
+    if (!activeCheckinNonce || checkinCodeStatus !== "valid") {
       setMessage("未检测到有效签到码，请扫描组织者二维码");
       return;
     }
@@ -261,6 +304,9 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
               <p>正在读取你的活动状态...</p>
             </div>
           )}
+          {checkinCodeStatus === "invalid" && (
+            <p className="notice-line">该签到码已失效，请重新扫描组织者二维码</p>
+          )}
 
           {!isOrganizer && (viewerStage === "guest" || viewerStage === "not_purchased") && (
             <>
@@ -281,11 +327,13 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
               <p className="status-title">待参加</p>
               <p>你已购买该活动门票，等待到场签到。</p>
               <p>已购票数：{myActivity?.confirmedOrderCount ?? 0}</p>
-              {activeCheckinNonce ? (
+              {checkinCodeStatus === "checking" && <p>签到码校验中...</p>}
+              {checkinCodeStatus === "valid" && activeCheckinNonce && (
                 <button type="button" onClick={() => void submitMyCheckin()}>
                   签到
                 </button>
-              ) : (
+              )}
+              {checkinCodeStatus !== "valid" && (
                 <p>请扫描组织者现场二维码后再签到。</p>
               )}
             </div>

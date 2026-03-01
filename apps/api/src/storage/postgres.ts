@@ -710,6 +710,43 @@ export async function consumeCheckinNonce(eventId: number, nonce: string) {
   };
 }
 
+export async function getCheckinNonceStatus(eventId: number, nonce: string) {
+  const result = await pool.query<CheckinNonceRow>(
+    `
+      SELECT * FROM checkin_nonces
+      WHERE event_id = $1 AND nonce = $2
+      LIMIT 1
+    `,
+    [eventId, nonce]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const row = result.rows[0];
+  return {
+    id: Number(row.id),
+    eventId: Number(row.event_id),
+    nonce: row.nonce,
+    expiresAt: asIso(row.expires_at),
+    usedAt: row.used_at ? asIso(row.used_at) : undefined,
+    createdAt: asIso(row.created_at)
+  };
+}
+
+export async function invalidateActiveCheckinNonces(eventId: number) {
+  await pool.query(
+    `
+      UPDATE checkin_nonces
+      SET used_at = NOW()
+      WHERE event_id = $1
+        AND used_at IS NULL
+    `,
+    [eventId]
+  );
+}
+
 export async function getCheckinByEventAndUser(eventId: number, userWallet: string) {
   const result = await pool.query<CheckinRow>(
     `SELECT * FROM checkins WHERE event_id = $1 AND user_wallet = $2`,

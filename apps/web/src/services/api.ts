@@ -133,6 +133,18 @@ export async function submitCheckin(payload: { eventId: number; nonce: string; u
   return data;
 }
 
+export async function validateCheckinCode(payload: { eventId: number; nonce: string }) {
+  const { data } = await api.post<{
+    valid: boolean;
+    reason: "ok" | "not_found" | "used" | "expired";
+    message: string;
+    expiresAt?: string;
+    usedAt?: string;
+    serverTime: string;
+  }>("/checkin/validate", payload);
+  return data;
+}
+
 export async function submitReview(payload: {
   eventId: number;
   userWallet: string;

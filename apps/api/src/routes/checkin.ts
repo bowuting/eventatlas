@@ -4,8 +4,10 @@ import { z } from "zod";
 import { chainService } from "../services/chainService.js";
 import {
   createCheckinNonce,
+  getCheckinNonceStatus,
   getCheckinByEventAndUser,
   getEventWithTickets,
+  invalidateActiveCheckinNonces,
   markCheckinConfirmed,
   markCheckinFailed,
   upsertCheckinPending,
@@ -26,6 +28,11 @@ const submitCheckinSchema = z.object({
   userWallet: z.string().min(1)
 });
 
+const validateCheckinSchema = z.object({
+  eventId: z.number().int().positive(),
+  nonce: z.string().min(8)
+});
+
 checkinRouter.post("/checkin/code", async (req, res) => {
   try {
     const parsed = createCodeSchema.safeParse(req.body);
@@ -37,6 +44,9 @@ checkinRouter.post("/checkin/code", async (req, res) => {
     if (!event) {
       return res.status(404).json({ message: "event not found" });
     }
+
+    // Keep only one active checkin nonce per event to prevent old QR reuse.
+    await invalidateActiveCheckinNonces(parsed.data.eventId);
 
     const nonce = randomBytes(16).toString("hex");
     const expiresAt = new Date(Date.now() + parsed.data.ttlSeconds * 1000).toISOString();
@@ -52,6 +62,56 @@ checkinRouter.post("/checkin/code", async (req, res) => {
       nonce: code.nonce,
       expiresAt: code.expiresAt,
       ttlSeconds: parsed.data.ttlSeconds
+    });
+  } catch (error) {
+    return serverError(res, error);
+  }
+});
+
+checkinRouter.post("/checkin/validate", async (req, res) => {
+  try {
+    const parsed = validateCheckinSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return badRequest(res, parsed.error.message);
+    }
+
+    const nonce = await getCheckinNonceStatus(parsed.data.eventId, parsed.data.nonce);
+    if (!nonce) {
+      return res.json({
+        valid: false,
+        reason: "not_found",
+        message: "invalid checkin nonce",
+        serverTime: new Date().toISOString()
+      });
+    }
+
+    if (nonce.usedAt) {
+      return res.json({
+        valid: false,
+        reason: "used",
+        message: "checkin nonce already used",
+        serverTime: new Date().toISOString(),
+        expiresAt: nonce.expiresAt,
+        usedAt: nonce.usedAt
+      });
+    }
+
+    if (new Date(nonce.expiresAt).getTime() < Date.now()) {
+      return res.json({
+        valid: false,
+        reason: "expired",
+        message: "checkin nonce expired",
+        serverTime: new Date().toISOString(),
+        expiresAt: nonce.expiresAt
+      });
+    }
+
+    return res.json({
+      valid: true,
+      reason: "ok",
+      message: "checkin nonce valid",
+      serverTime: new Date().toISOString(),
+      expiresAt: nonce.expiresAt
     });
   } catch (error) {
     return serverError(res, error);
