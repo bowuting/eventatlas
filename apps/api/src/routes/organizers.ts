@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { getAuthWallet, requireWalletAuth } from "../middleware/walletAuth.js";
 import { getOrganizerProfile, upsertOrganizerProfile } from "../storage/postgres.js";
 import { badRequest, serverError } from "../utils/response.js";
 
@@ -28,11 +29,15 @@ organizersRouter.get("/organizer/profile/:wallet", async (req, res) => {
   }
 });
 
-organizersRouter.put("/organizer/profile", async (req, res) => {
+organizersRouter.put("/organizer/profile", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = upsertProfileSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
+    }
+    if (parsed.data.wallet.toLowerCase() !== authWallet) {
+      return res.status(403).json({ message: "wallet does not match authenticated wallet" });
     }
 
     const profile = await upsertOrganizerProfile({

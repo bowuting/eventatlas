@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { useQuery } from "@tanstack/react-query";
-import { ticketPassAbi } from "@eventatlas/shared";
+import {
+  REVIEW_AUTH_DEFAULT_VALIDITY_MS,
+  buildReviewAuthorizationMessage,
+  ticketPassAbi
+} from "@eventatlas/shared";
 import { erc20Abi } from "viem";
-import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
+import { useAccount, usePublicClient, useSignMessage, useSwitchChain, useWriteContract } from "wagmi";
 import {
   confirmOrder,
   confirmOrderRefund,
@@ -72,9 +76,17 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function createReviewAuthNonce() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export function EventDetailPage({ eventId, checkinNonce }: Props) {
   const { address, chain } = useAccount();
   const { writeContractAsync } = useWriteContract();
+  const { signMessageAsync } = useSignMessage();
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient();
   const [message, setMessage] = useState("");
@@ -105,7 +117,7 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     enabled: Boolean(normalizedAddress && publicClient && ticketPassAddress),
     queryFn: async () => {
       if (!normalizedAddress || !publicClient || !ticketPassAddress) {
-        return false;
+        return null;
       }
       try {
         const valid = await publicClient.readContract({
@@ -116,7 +128,8 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
         });
         return Boolean(valid);
       } catch {
-        return false;
+        // RPC/network mismatch should not be treated as "definitely no ticket".
+        return null;
       }
     }
   });
@@ -178,12 +191,15 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
     myActivity?.status === "to_attend" &&
     !isValidTicketLoading &&
     hasOnchainValidTicket === false;
+  const inferredToAttend = hasOnchainValidTicket === true;
   const viewerStage: "guest" | "loading" | "not_purchased" | "to_attend" | "to_review" | "completed" = !normalizedAddress
     ? "guest"
     : isMyActivitiesLoading
       ? "loading"
       : !myActivity
-        ? "not_purchased"
+        ? inferredToAttend
+          ? "to_attend"
+          : "not_purchased"
         : missingValidTicket
           ? "not_purchased"
           : myActivity.status;
@@ -198,6 +214,18 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
   };
   const refundCutoffMs = new Date(event?.startAt ?? Date.now()).getTime() - 2 * 60 * 60 * 1000;
   const refundWindowOpen = Date.now() < refundCutoffMs;
+  const organizerName = event?.organizer?.name?.trim() || event?.organizerWallet || "未知组织者";
+  const organizerLogoUrl = event?.organizer?.logoUrl;
+  const organizerHistoryRatings = event?.organizerHistoryRatings ?? [];
+  const ratedHistory = organizerHistoryRatings.filter((item) => item.averageRating !== undefined && item.reviewCount > 0);
+  const organizerReviewCount = ratedHistory.reduce((sum, item) => sum + item.reviewCount, 0);
+  const organizerWeightedRatingSum = ratedHistory.reduce(
+    (sum, item) => sum + (item.averageRating ?? 0) * item.reviewCount,
+    0
+  );
+  const organizerAverageRating = organizerReviewCount > 0
+    ? organizerWeightedRatingSum / organizerReviewCount
+    : undefined;
 
   useEffect(() => {
     if (!checkinNonce) {
@@ -374,14 +402,36 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
       return;
     }
 
-    setMessage("提交评价中...");
+    const content = reviewContent.trim();
+
+    setMessage("请在钱包中签名确认评价...");
     try {
+      const issuedAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + REVIEW_AUTH_DEFAULT_VALIDITY_MS).toISOString();
+      const nonce = createReviewAuthNonce();
+      const authMessage = buildReviewAuthorizationMessage({
+        eventId,
+        userWallet: address.toLowerCase(),
+        rating: Number(rating),
+        content,
+        media: [],
+        nonce,
+        issuedAt,
+        expiresAt
+      });
+      const signature = await signMessageAsync({ message: authMessage });
+
+      setMessage("提交评价中...");
       const result = await submitReview({
         eventId,
         userWallet: address,
         rating: Number(rating),
-        content: reviewContent.trim(),
-        media: []
+        content,
+        media: [],
+        nonce,
+        issuedAt,
+        expiresAt,
+        signature
       });
 
       setMessage(`评价提交成功，链上交易: ${result.chain.txHash}`);
@@ -507,9 +557,31 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
           <h2>{event.title}</h2>
           {event.coverUrl && <img src={event.coverUrl} alt={event.title} className="detail-cover" />}
           <p>{event.description}</p>
+          <div className="organizer-summary">
+            {organizerLogoUrl ? (
+              <img src={organizerLogoUrl} alt={`${organizerName} logo`} className="organizer-avatar" />
+            ) : (
+              <div className="organizer-avatar organizer-avatar-fallback">{organizerName.slice(0, 1).toUpperCase()}</div>
+            )}
+            <div className="stack" style={{ gap: 2 }}>
+              <p className="status-title">组织者</p>
+              <p>{organizerName}</p>
+            </div>
+          </div>
           <p>时间：{new Date(event.startAt).toLocaleString()} - {new Date(event.endAt).toLocaleString()}</p>
           <p>地点：{event.address}</p>
           <p>容量：{event.capacity}</p>
+          <div className="stack">
+            <h3>过往活动评分</h3>
+            {organizerAverageRating === undefined && <p>暂无历史活动评分。</p>}
+            {organizerAverageRating !== undefined && (
+              <article className="history-rating-card">
+                <p>历史平均分：{organizerAverageRating.toFixed(2)} / 5</p>
+                <p>累计评价：{organizerReviewCount} 条</p>
+                <p>统计活动：{ratedHistory.length} 场</p>
+              </article>
+            )}
+          </div>
         </div>
 
         <aside className="stack detail-side">
@@ -578,6 +650,9 @@ export function EventDetailPage({ eventId, checkinNonce }: Props) {
             <div className="status-block">
               <p className="status-title">待参加</p>
               <p>你已购买该活动门票，等待到场签到。</p>
+              {!myActivity && inferredToAttend && (
+                <p>已根据链上状态识别到你持有有效门票。</p>
+              )}
               <p>已购票数：{myActivity?.confirmedOrderCount ?? 0}</p>
               <p>
                 退款规则：活动开始前 2 小时可申请退款，提交后链上直接原路退款（无需人工审核）。

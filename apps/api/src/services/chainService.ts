@@ -193,6 +193,31 @@ class ChainService {
     return Boolean(await contract.hasAttendanceProof(BigInt(eventId), userWallet));
   }
 
+  async listAttendanceEventIdsByUser(userWallet: string) {
+    const contract = this.getAttendanceReadContract();
+    const filter = contract.filters.AttendanceMinted(userWallet.toLowerCase(), null);
+    const latestBlock = await this.provider.getBlockNumber();
+    const fromBlock = Math.max(0, Math.min(env.ATTENDANCE_EVENT_FROM_BLOCK, latestBlock));
+    const chunkSize = Math.max(1, env.ATTENDANCE_EVENT_QUERY_CHUNK_SIZE);
+
+    const logs = [];
+    for (let start = fromBlock; start <= latestBlock; start += chunkSize) {
+      const end = Math.min(start + chunkSize - 1, latestBlock);
+      const chunkLogs = await contract.queryFilter(filter, start, end);
+      logs.push(...chunkLogs);
+    }
+
+    const ids = new Set<number>();
+    for (const log of logs) {
+      const maybeEventId = (log as { args?: { eventId?: bigint } }).args?.eventId;
+      if (typeof maybeEventId === "bigint") {
+        ids.add(Number(maybeEventId));
+      }
+    }
+
+    return Array.from(ids.values());
+  }
+
   async mintAttendance(eventId: number, userWallet: string) {
     const contract = this.getAttendanceWriteContract();
     const tx = await contract.mintAttendance(BigInt(eventId), userWallet);

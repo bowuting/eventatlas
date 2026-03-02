@@ -2,6 +2,7 @@ import path from "node:path";
 import cors from "cors";
 import express from "express";
 import { env } from "./config/env.js";
+import { authRouter } from "./routes/auth.js";
 import { checkinRouter } from "./routes/checkin.js";
 import { eventsRouter } from "./routes/events.js";
 import { organizersRouter } from "./routes/organizers.js";
@@ -26,6 +27,7 @@ async function startServer() {
     res.json({ ok: true, chainId: env.AVAX_CHAIN_ID, network: "Avalanche", storage: "postgres" });
   });
 
+  app.use(authRouter);
   app.use(eventsRouter);
   app.use(organizersRouter);
   app.use(ordersRouter);

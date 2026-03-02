@@ -34,6 +34,19 @@ export type EventItem = {
   chainSyncedAt?: string;
   createdAt: string;
   ticketTypes: TicketType[];
+  organizer?: {
+    wallet: string;
+    name?: string;
+    logoUrl?: string;
+  };
+  organizerHistoryRatings?: Array<{
+    eventId: number;
+    title: string;
+    startAt: string;
+    endAt: string;
+    averageRating?: number;
+    reviewCount: number;
+  }>;
 };
 
 export type OrderItem = {
@@ -68,6 +81,24 @@ export type MyActivityItem = {
   checkinStatus?: "pending" | "confirmed" | "failed";
   reviewStatus?: "pending" | "confirmed" | "failed";
   status: MyActivityStatus;
+};
+
+export type AttendanceProofActivity = {
+  eventId: number;
+  title: string;
+  category: string;
+  coverUrl?: string;
+  address: string;
+  lat: number;
+  lng: number;
+  startAt: string;
+  endAt: string;
+};
+
+export type RecommendationItem = {
+  eventId: number;
+  score: number;
+  reasons: string[];
 };
 
 export type OrganizerProfile = {

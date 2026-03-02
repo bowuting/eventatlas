@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useAccount } from "wagmi";
+import { useEffect, useRef, useState } from "react";
+import { useAccount, useSignMessage } from "wagmi";
 import { CheckinBoardPage } from "./components/CheckinBoardPage";
 import { EventDetailPage } from "./components/EventDetailPage";
 import { EventsListPage } from "./components/EventsListPage";
@@ -7,6 +7,7 @@ import { MyActivitiesPage } from "./components/MyActivitiesPage";
 import { OrganizerEventsPage } from "./components/OrganizerEventsPage";
 import { OrganizerConsole } from "./components/OrganizerConsole";
 import { TopWalletControl } from "./components/TopWalletControl";
+import { clearWalletAuthSession, ensureWalletAuthSession } from "./services/api";
 import "./styles.css";
 
 type Route =
@@ -63,8 +64,10 @@ function parseHashRoute(hash: string): Route {
 
 export default function App() {
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const [route, setRoute] = useState<Route>(parseHashRoute(window.location.hash));
   const [notice, setNotice] = useState("");
+  const authWalletRef = useRef<string | null>(null);
 
   useEffect(() => {
     function syncRouteFromHash() {
@@ -79,6 +82,40 @@ export default function App() {
       setNotice("");
     }
   }, [isConnected]);
+
+  useEffect(() => {
+    if (!isConnected || !address) {
+      authWalletRef.current = null;
+      clearWalletAuthSession();
+      return;
+    }
+    const normalizedAddress = address.toLowerCase();
+    if (authWalletRef.current === normalizedAddress) {
+      return;
+    }
+    authWalletRef.current = normalizedAddress;
+
+    let canceled = false;
+    void (async () => {
+      try {
+        await ensureWalletAuthSession(normalizedAddress, signMessageAsync);
+        if (!canceled) {
+          setNotice("");
+        }
+      } catch (error) {
+        authWalletRef.current = null;
+        if (canceled) {
+          return;
+        }
+        const reason = error instanceof Error ? error.message : "unknown";
+        setNotice(`钱包登录失败：${reason}`);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [address, isConnected, signMessageAsync]);
 
   function navigate(
     path:
@@ -174,7 +211,7 @@ export default function App() {
     }
 
     if (route.name === "events") {
-      return <EventsListPage onOpenEvent={(eventId) => navigate(`/events/${eventId}`)} />;
+      return <EventsListPage wallet={address} onOpenEvent={(eventId) => navigate(`/events/${eventId}`)} />;
     }
 
     if (route.name === "organizerEvents") {

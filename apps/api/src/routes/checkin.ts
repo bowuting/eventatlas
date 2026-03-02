@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import { getAuthWallet, requireWalletAuth } from "../middleware/walletAuth.js";
 import { chainService } from "../services/chainService.js";
 import {
   createCheckinNonce,
@@ -19,7 +20,7 @@ export const checkinRouter = Router();
 
 const createCodeSchema = z.object({
   eventId: z.number().int().positive(),
-  ttlSeconds: z.number().int().min(30).max(120).default(60)
+  ttlSeconds: z.number().int().min(30).max(600).default(300)
 });
 
 const submitCheckinSchema = z.object({
@@ -33,8 +34,9 @@ const validateCheckinSchema = z.object({
   nonce: z.string().min(8)
 });
 
-checkinRouter.post("/checkin/code", async (req, res) => {
+checkinRouter.post("/checkin/code", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = createCodeSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
@@ -43,6 +45,9 @@ checkinRouter.post("/checkin/code", async (req, res) => {
     const event = await getEventWithTickets(parsed.data.eventId);
     if (!event) {
       return res.status(404).json({ message: "event not found" });
+    }
+    if (event.organizerWallet !== authWallet) {
+      return res.status(403).json({ message: "only event organizer can create checkin code" });
     }
 
     // Keep only one active checkin nonce per event to prevent old QR reuse.
@@ -118,8 +123,9 @@ checkinRouter.post("/checkin/validate", async (req, res) => {
   }
 });
 
-checkinRouter.post("/checkin", async (req, res) => {
+checkinRouter.post("/checkin", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = submitCheckinSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
@@ -131,6 +137,9 @@ checkinRouter.post("/checkin", async (req, res) => {
     }
 
     const userWallet = parsed.data.userWallet.toLowerCase();
+    if (userWallet !== authWallet) {
+      return res.status(403).json({ message: "userWallet does not match authenticated wallet" });
+    }
 
     const existingCheckin = await getCheckinByEventAndUser(parsed.data.eventId, userWallet);
     if (existingCheckin?.status === "confirmed") {

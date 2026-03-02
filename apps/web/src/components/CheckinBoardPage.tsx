@@ -6,8 +6,8 @@ type Props = {
   eventId: number;
 };
 
-const DEFAULT_TTL_SECONDS = 60;
-const REFRESH_INTERVAL_MS = 25_000;
+const DEFAULT_TTL_SECONDS = 300;
+const REFRESH_INTERVAL_MS = 300_000;
 
 export function CheckinBoardPage({ eventId }: Props) {
   const [code, setCode] = useState<{ nonce: string; expiresAt: string } | null>(null);

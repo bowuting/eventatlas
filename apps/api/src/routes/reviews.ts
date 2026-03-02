@@ -1,6 +1,11 @@
-import { keccak256, toUtf8Bytes } from "ethers";
+import {
+  REVIEW_AUTH_MAX_VALIDITY_MS,
+  buildReviewAuthorizationMessage
+} from "@eventatlas/shared";
+import { isAddress, keccak256, toUtf8Bytes, verifyMessage } from "ethers";
 import { Router } from "express";
 import { z } from "zod";
+import { getAuthWallet, requireWalletAuth } from "../middleware/walletAuth.js";
 import { chainService } from "../services/chainService.js";
 import {
   createReviewPending,
@@ -19,7 +24,11 @@ const createReviewSchema = z.object({
   userWallet: z.string().min(1),
   rating: z.number().int().min(1).max(5),
   content: z.string().min(1).max(2000),
-  media: z.array(z.string().url()).default([])
+  media: z.array(z.string().url()).default([]),
+  nonce: z.string().min(8).max(128),
+  issuedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/)
 });
 
 reviewsRouter.get("/events/:id/reviews", async (req, res) => {
@@ -36,8 +45,9 @@ reviewsRouter.get("/events/:id/reviews", async (req, res) => {
   }
 });
 
-reviewsRouter.post("/reviews", async (req, res) => {
+reviewsRouter.post("/reviews", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = createReviewSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
@@ -49,6 +59,48 @@ reviewsRouter.post("/reviews", async (req, res) => {
     }
 
     const userWallet = parsed.data.userWallet.toLowerCase();
+    if (userWallet !== authWallet) {
+      return res.status(403).json({ message: "userWallet does not match authenticated wallet" });
+    }
+    if (!isAddress(userWallet)) {
+      return badRequest(res, "invalid user wallet");
+    }
+
+    const issuedAtMs = Date.parse(parsed.data.issuedAt);
+    const expiresAtMs = Date.parse(parsed.data.expiresAt);
+    if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs)) {
+      return badRequest(res, "invalid signature timestamp");
+    }
+    if (expiresAtMs <= issuedAtMs) {
+      return badRequest(res, "invalid signature time range");
+    }
+    if (expiresAtMs - issuedAtMs > REVIEW_AUTH_MAX_VALIDITY_MS) {
+      return badRequest(res, "signature window is too long");
+    }
+    const now = Date.now();
+    if (now > expiresAtMs) {
+      return res.status(401).json({ message: "signature expired" });
+    }
+    if (issuedAtMs > now + 60_000) {
+      return badRequest(res, "signature issuedAt is in the future");
+    }
+
+    const content = parsed.data.content.trim();
+    const media = parsed.data.media;
+    const authMessage = buildReviewAuthorizationMessage({
+      eventId: parsed.data.eventId,
+      userWallet,
+      rating: parsed.data.rating,
+      content,
+      media,
+      nonce: parsed.data.nonce,
+      issuedAt: parsed.data.issuedAt,
+      expiresAt: parsed.data.expiresAt
+    });
+    const recoveredWallet = verifyMessage(authMessage, parsed.data.signature).toLowerCase();
+    if (recoveredWallet !== userWallet) {
+      return res.status(401).json({ message: "signature does not match userWallet" });
+    }
 
     const existing = await getReviewByEventAndUser(parsed.data.eventId, userWallet);
     if (existing) {
@@ -65,8 +117,6 @@ reviewsRouter.post("/reviews", async (req, res) => {
       return res.status(409).json({ message: "rating already anchored on chain" });
     }
 
-    const content = parsed.data.content.trim();
-    const media = parsed.data.media;
     const reviewHashPayload = JSON.stringify({
       eventId: parsed.data.eventId,
       userWallet,

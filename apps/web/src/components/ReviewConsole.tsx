@@ -1,4 +1,9 @@
 import { FormEvent, useMemo, useState } from "react";
+import {
+  REVIEW_AUTH_DEFAULT_VALIDITY_MS,
+  buildReviewAuthorizationMessage
+} from "@eventatlas/shared";
+import { useSignMessage } from "wagmi";
 import { fetchEventReviews, submitReview } from "../services/api";
 import type { EventItem } from "../types";
 
@@ -23,6 +28,7 @@ export function ReviewConsole({ events, connectedWallet }: Props) {
   const [content, setContent] = useState("");
   const [message, setMessage] = useState("");
   const [reviews, setReviews] = useState<ReviewView[]>([]);
+  const { signMessageAsync } = useSignMessage();
 
   const selected = useMemo(
     () => events.find((item) => item.id === selectedEventId) ?? events[0],
@@ -45,15 +51,48 @@ export function ReviewConsole({ events, connectedWallet }: Props) {
       return;
     }
 
+    if (!connectedWallet) {
+      setMessage("请先连接钱包后再评价");
+      return;
+    }
+
+    const normalizedConnectedWallet = connectedWallet.toLowerCase();
+    if (wallet.trim().toLowerCase() !== normalizedConnectedWallet) {
+      setMessage("评价钱包必须与当前连接钱包一致");
+      return;
+    }
+
     setMessage("提交评价中（平台代付 gas 上链评分）...");
 
     try {
+      const contentValue = content.trim();
+      const nonce = typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const issuedAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + REVIEW_AUTH_DEFAULT_VALIDITY_MS).toISOString();
+      const messageToSign = buildReviewAuthorizationMessage({
+        eventId: selected.id,
+        userWallet: normalizedConnectedWallet,
+        rating: Number(rating),
+        content: contentValue,
+        media: [],
+        nonce,
+        issuedAt,
+        expiresAt
+      });
+      const signature = await signMessageAsync({ message: messageToSign });
+
       const result = await submitReview({
         eventId: selected.id,
-        userWallet: wallet,
+        userWallet: normalizedConnectedWallet,
         rating: Number(rating),
-        content,
-        media: []
+        content: contentValue,
+        media: [],
+        nonce,
+        issuedAt,
+        expiresAt,
+        signature
       });
 
       setMessage(`评价提交成功，链上交易: ${result.chain.txHash}`);

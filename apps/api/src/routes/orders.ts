@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { getAuthWallet, requireWalletAuth } from "../middleware/walletAuth.js";
 import { chainService } from "../services/chainService.js";
 import {
   createOrder,
@@ -56,11 +57,15 @@ ordersRouter.get("/orders", async (req, res) => {
   }
 });
 
-ordersRouter.post("/orders", async (req, res) => {
+ordersRouter.post("/orders", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = createOrderSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
+    }
+    if (parsed.data.buyerWallet.toLowerCase() !== authWallet) {
+      return res.status(403).json({ message: "buyerWallet does not match authenticated wallet" });
     }
 
     const event = await getEventWithTickets(parsed.data.eventId);
@@ -93,8 +98,9 @@ ordersRouter.post("/orders", async (req, res) => {
   }
 });
 
-ordersRouter.post("/orders/confirm", async (req, res) => {
+ordersRouter.post("/orders/confirm", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = confirmOrderSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
@@ -103,6 +109,9 @@ ordersRouter.post("/orders/confirm", async (req, res) => {
     const order = await getOrderById(parsed.data.orderId);
     if (!order) {
       return res.status(404).json({ message: "order not found" });
+    }
+    if (order.buyerWallet !== authWallet) {
+      return res.status(403).json({ message: "order does not belong to authenticated wallet" });
     }
 
     try {
@@ -130,8 +139,9 @@ ordersRouter.post("/orders/confirm", async (req, res) => {
   }
 });
 
-ordersRouter.post("/orders/refund/confirm", async (req, res) => {
+ordersRouter.post("/orders/refund/confirm", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = confirmRefundSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
@@ -140,6 +150,9 @@ ordersRouter.post("/orders/refund/confirm", async (req, res) => {
     const order = await getOrderById(parsed.data.orderId);
     if (!order) {
       return res.status(404).json({ message: "order not found" });
+    }
+    if (order.buyerWallet !== authWallet) {
+      return res.status(403).json({ message: "order does not belong to authenticated wallet" });
     }
     if (order.status !== "confirmed") {
       return res.status(400).json({ message: "order is not confirmed" });

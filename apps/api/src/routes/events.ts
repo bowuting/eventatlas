@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
+import { getAuthWallet, requireWalletAuth } from "../middleware/walletAuth.js";
 import {
   createEvent,
   createTicketType,
+  getEventDetailWithTickets,
   getEventWithTickets,
   listEventsWithTickets,
   markEventChainFailed,
@@ -56,7 +58,7 @@ eventsRouter.get("/events", async (_req, res) => {
 eventsRouter.get("/events/:id", async (req, res) => {
   try {
     const eventId = Number(req.params.id);
-    const event = await getEventWithTickets(eventId);
+    const event = await getEventDetailWithTickets(eventId);
 
     if (!event) {
       return res.status(404).json({ message: "event not found" });
@@ -68,11 +70,15 @@ eventsRouter.get("/events/:id", async (req, res) => {
   }
 });
 
-eventsRouter.post("/organizer/events", async (req, res) => {
+eventsRouter.post("/organizer/events", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = createEventSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
+    }
+    if (parsed.data.organizerWallet.toLowerCase() !== authWallet) {
+      return res.status(403).json({ message: "organizerWallet does not match authenticated wallet" });
     }
 
     const item = await createEvent({
@@ -104,11 +110,15 @@ eventsRouter.post("/organizer/events", async (req, res) => {
   }
 });
 
-eventsRouter.post("/organizer/events/publish", async (req, res) => {
+eventsRouter.post("/organizer/events/publish", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const parsed = publishEventSchema.safeParse(req.body);
     if (!parsed.success) {
       return badRequest(res, parsed.error.message);
+    }
+    if (parsed.data.organizerWallet.toLowerCase() !== authWallet) {
+      return res.status(403).json({ message: "organizerWallet does not match authenticated wallet" });
     }
 
     const event = await createEvent({
@@ -210,13 +220,17 @@ eventsRouter.post("/organizer/events/publish", async (req, res) => {
   }
 });
 
-eventsRouter.post("/organizer/events/:id/tickets", async (req, res) => {
+eventsRouter.post("/organizer/events/:id/tickets", requireWalletAuth, async (req, res) => {
   try {
+    const authWallet = getAuthWallet(res);
     const eventId = Number(req.params.id);
     const event = await getEventWithTickets(eventId);
 
     if (!event) {
       return res.status(404).json({ message: "event not found" });
+    }
+    if (event.organizerWallet !== authWallet) {
+      return res.status(403).json({ message: "only event organizer can configure tickets" });
     }
 
     const parsed = createTicketSchema.safeParse(req.body);
